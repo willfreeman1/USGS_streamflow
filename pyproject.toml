@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "streamflow"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "python-dotenv>=1.0",
+    "requests>=2.32",
+    "xarray>=2024.0",
+    "netcdf4>=1.6",
+    "rasterio>=1.3",
+    "shapely>=2.0",
+    "pyproj>=3.6",
+    "pyshp>=2.3",
+    "h5py>=3.11",
+    "lightgbm>=4.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+ingest-flow = "streamflow.ingest_flow:main"
+ingest-historical = "streamflow.ingest_historical:main"
+build-weekly = "streamflow.build_weekly:main"
+ingest-basins = "streamflow.ingest_basins:main"
+ingest-gridmet = "streamflow.ingest_gridmet:main"
+ingest-nldas = "streamflow.ingest_nldas:main"
+ingest-smap = "streamflow.ingest_smap:main"
+ingest-reservoirs = "streamflow.ingest_reservoirs:main"
+ingest-openet = "streamflow.ingest_openet:main"
+ingest-swe = "streamflow.ingest_swe:main"
+ingest-nmme = "streamflow.ingest_nmme:main"
+ingest-gefs = "streamflow.ingest_gefs:main"
+ingest-climate = "streamflow.ingest_climate:main"
+design-retrain = "streamflow.retrain_design:main"
+design-drought = "streamflow.drought_design:main"
+score-drought-hold = "streamflow.drought_hold:main"
+design-drought-monitor = "streamflow.drought_monitor:main"
+score-drought-gate = "streamflow.drought_gate:main"
+weekly-job = "streamflow.weekly_job:main"
+publish-dashboard = "streamflow.dashboard:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

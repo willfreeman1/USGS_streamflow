@@ -1,0 +1,15 @@
+{
+  "end_date": "2026-09-14",
+  "installed_through": "2019-09-23",
+  "promote": false,
+  "locked_recall": 0.6752972258916776,
+  "persistence_recall": 0.5191545574636723,
+  "recall_gap": 0.15614266842800528,
+  "locked_false_alarm_rate": 0.17646431726112516,
+  "flow_shift": 0.20382731731936116,
+  "watch": true,
+  "n": 161604,
+  "n_drought": 30280,
+  "gap_line": 0.1,
+  "shift_watch": 0.2
+}

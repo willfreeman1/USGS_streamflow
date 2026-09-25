@@ -1,0 +1,34 @@
+# Secrets and local machine
+.env
+.env.*
+!.env.example
+
+# Environments and junk
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Large data and saved trees (stay on the desktop)
+/data/
+/models/
+/logs/
+
+# Editor / chat / Cursor
+.specstory/
+.cursor/
+.idea/
+.vscode/
+
+# Internal notes — not for reviewers
+overview.md
+context.md
+sources.md
+
+# One-off local investigation, not part of the product
+src/streamflow/live_audit.py
+scripts/finish_matched.py
+scripts/summarize_importance.py
