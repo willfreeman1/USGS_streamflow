@@ -35,8 +35,8 @@ STATIC_PATH = RAW_DIR / "sciencebase_p132nswy" / "conus_static_inputs_gages.csv"
 USER_AGENT = "usgs-streamflow-monitor (local)"
 GEFS_RES = 0.5
 LEADS = (24, 48, 72, 96, 120, 144, 168, 192, 216, 240)
-# Cap concurrent curls so we do not open 60 AWS connections at once.
-_DOWNLOAD_SLOTS = Semaphore(24)
+# Cap concurrent curls. 12 day-workers × 10 leads would otherwise open 120.
+_DOWNLOAD_SLOTS = Semaphore(48)
 _GDAL_LOCK = Lock()
 _FLUSH_LOCK = Lock()
 
@@ -301,8 +301,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--workers",
         type=int,
-        default=6,
-        help="How many calendar days to download at once (default 6).",
+        default=12,
+        help="How many calendar days to download at once (default 12).",
     )
     args = parser.parse_args(argv)
     build_basin_daily(

@@ -49,7 +49,7 @@ Any model we keep has to catch **more** of the real droughts than that check, by
 
 The Survey published a rich weekly file for 1980 through March 2020 (about 6.7 million station-weeks, 3,229 stations). That file is frozen. It is what we use to **replay history** and write rules.
 
-After 2020 we have to rebuild the same kinds of columns ourselves: current flow from the Survey’s new water API, weather from gridMET, soil water from NASA, snow from the University of Arizona, short-range weather forecasts, seasonal forecasts, and a few climate indexes (El Niño and the like). That live weekly table is now about 500,000 station-weeks, 4 September 2023 through 14 September 2026, for 3,197 of those stations. Thirty-five of the 3,229 have no current daily flow in our window; that is missing data, not a download we gave up on.
+After 2020 we have to rebuild the same kinds of columns ourselves: current flow from the Survey’s new water API, weather from gridMET, soil water from NASA, snow from the University of Arizona, short-range weather forecasts, seasonal forecasts, and a few climate indexes (El Niño and the like). That live weekly table is now about 1.07 million station-weeks, 30 March 2020 through 14 September 2026, for 3,220 of those stations. Nine of the 3,229 have no current daily flow in our window; that is missing data, not a download we gave up on. NOAA’s half-degree short-range forecast archive starts 23 September 2020, so the first six months of live weeks have weather and flow but not those forecast columns.
 
 We only train and score on columns we can build both ways. Lake storage and one satellite “actual evaporation” column have the same names in the old file and the new file but are **not** the same measurement (different lakes attached, different units). Those stay out of the matched model so a rule written on 1990s data can still be used in 2026.
 
@@ -130,7 +130,7 @@ On 2000–2012, that 52-week lead once fell as low as 7 percentage points. The 1
 
 We scored 2013 through March 2020 with the **same 1999 model and the same 0.70 line**, without peeking to change 0.70. That stretch had 101,235 drought station-weeks. The model caught 59% of the weeks that really were drought. On the weeks that were **not** drought, it wrongly called drought 7.8% of the time. Those wrong calls are **false positives**: the model said drought and the river was not in drought. “Already dry” caught 46% of real droughts and had a 5% false-positive rate (wrongly called drought on 5% of non-drought weeks). The rule held. We did not move 0.70 after seeing those years.
 
-Then we replayed 2013 onward with the **52-week retrain rule**. The model was retrained on four dates when the lead got too small: 4 May 2015, 2 May 2016, 18 December 2017, and 23 September 2019. After each of those we waited 52 weeks. There is no matched weekly file for 2021–2023, so we do not pretend 2020 and 2024 are one continuous stretch.
+Then we replayed 2013 onward with the **52-week retrain rule**. The model was retrained on four dates when the lead got too small: 4 May 2015, 2 May 2016, 18 December 2017, and 23 September 2019. After each of those we waited 52 weeks. We rebuilt the live weekly table from 30 March 2020, the day the Survey’s frozen file ends, so 2021–2023 sit in the same file as 2024–2026. The first 52-week scored window on that live file ends 19 April 2021. The rule did not retrain again.
 
 ## Where we are today
 

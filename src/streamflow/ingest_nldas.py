@@ -112,7 +112,7 @@ def build_basin_daily(
         except Exception as exc:  # noqa: BLE001
             return day, None, str(exc)
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         futures = [pool.submit(_one, day) for day in days]
         for fut in as_completed(futures):
             day, path, err = fut.result()

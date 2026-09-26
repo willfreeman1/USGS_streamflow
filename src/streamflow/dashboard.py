@@ -180,10 +180,13 @@ def _line_svg(
     if y_max is None:
         hi += pad
     n = len(dates)
-    span = max(n - 1, 1)
+    stamps = [pd.Timestamp(d) for d in dates]
+    t0 = stamps[0] if stamps else pd.Timestamp("2013-01-01")
+    t1 = stamps[-1] if stamps else t0
+    time_span = max((t1 - t0).total_seconds(), 1.0)
 
     def x_at(i: int) -> float:
-        return left + plot_w * i / span
+        return left + plot_w * (stamps[i] - t0).total_seconds() / time_span
 
     def y_at(v: float) -> float:
         return top + plot_h * (1 - (v - lo) / (hi - lo))
@@ -207,13 +210,24 @@ def _line_svg(
             f'font-size="11" fill="#444">{d}</text>'
         )
     paths = []
+    gap_days = pd.Timedelta(days=21)
     for si, (ys, color, label) in enumerate(zip(series, colors, labels)):
-        pts = " ".join(
-            f"{x_at(i):.1f},{y_at(v):.1f}" for i, v in enumerate(ys) if v == v
-        )
-        paths.append(
-            f'<polyline fill="none" stroke="{color}" stroke-width="1.8" points="{pts}" />'
-        )
+        chunks: list[list[str]] = [[]]
+        prev = None
+        for i, v in enumerate(ys):
+            if v != v:
+                continue
+            if prev is not None and stamps[i] - prev > gap_days:
+                chunks.append([])
+            chunks[-1].append(f"{x_at(i):.1f},{y_at(v):.1f}")
+            prev = stamps[i]
+        for chunk in chunks:
+            if len(chunk) < 2:
+                continue
+            pts = " ".join(chunk)
+            paths.append(
+                f'<polyline fill="none" stroke="{color}" stroke-width="1.8" points="{pts}" />'
+            )
         paths.append(
             f'<text x="{left + 8 + 200 * si}" y="18" font-size="12" fill="{color}">{label}</text>'
         )

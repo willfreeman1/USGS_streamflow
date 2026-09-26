@@ -20,6 +20,7 @@ import pyarrow.feather as ft
 import pyarrow.parquet as pq
 
 from streamflow.config import (
+    LIVE_WEEKLY_START,
     DAILY_FLOW_PATH,
     OPENET_POINT_MONTHLY,
     PROCESSED_DIR,
@@ -194,6 +195,15 @@ def build_weekly_from_daily(
     scored = attach_water_use_mean(scored)
     scored = add_flow_scores(scored, daily)
     scored = add_rolls(scored)
+    start = pd.Timestamp(LIVE_WEEKLY_START)
+    n_warm = int((scored["Date"] < start).sum())
+    scored = scored.loc[scored["Date"] >= start].copy()
+    logger.info(
+        "dropped %s warmup weeks before %s; kept %s from the live start",
+        n_warm,
+        LIVE_WEEKLY_START,
+        len(scored),
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     scored.to_parquet(out_path, index=False)

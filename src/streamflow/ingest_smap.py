@@ -257,7 +257,14 @@ def build_basin_daily(
     if not frames:
         raise RuntimeError("No SMAP days extracted")
     table = pd.concat(frames, ignore_index=True)
-    table = table.sort_values(["StaID", "date"]).reset_index(drop=True)
+    if out_path.exists():
+        old = pd.read_parquet(out_path)
+        table = pd.concat([old, table], ignore_index=True)
+    table = (
+        table.sort_values(["StaID", "date"])
+        .drop_duplicates(["StaID", "date"], keep="last")
+        .reset_index(drop=True)
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     table.to_parquet(out_path, index=False)
     logger.info(

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from streamflow.config import (
+    BOOTSTRAP_INSTALLED,
     DROUGHT_GATE_TRAIL_PATH,
     DROUGHT_GATE_YEAR_PATH,
     WEEKLY_HIST_MATCHED,
@@ -166,6 +167,72 @@ def _walk_segment(
     return rows, model, installed_end
 
 
+def _write_trail(trail: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    latest = trail.loc[trail["source"] != "design_2000_2012"]
+    if not latest.empty:
+        last = latest.iloc[-1]
+        logger.info(
+            "latest trail ending %s installed=%s gap=%.3f far=%.3f watch=%s promote=%s",
+            pd.Timestamp(last["end_date"]).date(),
+            last["installed_through"],
+            last["recall_gap"],
+            last["locked_false_alarm_rate"],
+            last["watch"],
+            last["promote"],
+        )
+
+    DROUGHT_GATE_TRAIL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    trail.to_parquet(DROUGHT_GATE_TRAIL_PATH, index=False)
+    year_rows = []
+    scored = trail.loc[trail["source"].isin(("hist", "live"))]
+    if not scored.empty:
+        scored = scored.copy()
+        scored["year"] = pd.to_datetime(scored["end_date"]).dt.year
+        for year, grp in scored.groupby("year"):
+            row = grp.iloc[-1].to_dict()
+            row["year"] = int(year)
+            year_rows.append(row)
+    yearly = pd.DataFrame(year_rows)
+    yearly.to_parquet(DROUGHT_GATE_YEAR_PATH, index=False)
+    logger.info("wrote %s and %s", DROUGHT_GATE_TRAIL_PATH, DROUGHT_GATE_YEAR_PATH)
+    return trail, yearly
+
+
+def run_live_only(
+    hist_path=WEEKLY_HIST_MATCHED,
+    live_path=WEEKLY_LIVE_PATH,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Re-walk live weeks only. Keeps the already-scored 2000–2020 trail."""
+    if not DROUGHT_GATE_TRAIL_PATH.exists():
+        raise RuntimeError(f"Missing {DROUGHT_GATE_TRAIL_PATH}; run a full score-drought-gate first")
+    if not live_path.exists():
+        raise RuntimeError(f"Missing {live_path}; run build-weekly --from-daily")
+
+    from streamflow.live_gate import ensure_model
+
+    old = pd.read_parquet(DROUGHT_GATE_TRAIL_PATH)
+    kept = old.loc[old["source"] != "live"].copy()
+    hist = _prepare(hist_path)
+    live = _prepare(live_path)
+    feats = feature_columns(hist)
+    ref_flow = _train_through(hist, DESIGN_FIT_END)[TARGET_COL].to_numpy()
+    model, _state = ensure_model(hist, feats, live)
+    live_rows, _, _ = _walk_segment(
+        live,
+        feats=feats,
+        model=model,
+        installed_end=BOOTSTRAP_INSTALLED,
+        ref_flow=ref_flow,
+        hist=hist,
+        live=live,
+        allow_promote=True,
+        source="live",
+    )
+    trail = pd.concat([kept, pd.DataFrame(live_rows)], ignore_index=True)
+    trail = trail.sort_values("end_date").reset_index(drop=True)
+    return _write_trail(trail)
+
+
 def run_gate(
     hist_path=WEEKLY_HIST_MATCHED,
     live_path=WEEKLY_LIVE_PATH,
@@ -241,36 +308,7 @@ def run_gate(
         )
 
     trail = pd.DataFrame(design_rows + hist_rows + live_rows)
-    latest = trail.loc[trail["source"] != "design_2000_2012"]
-    if not latest.empty:
-        last = latest.iloc[-1]
-        logger.info(
-            "latest trail ending %s installed=%s gap=%.3f far=%.3f watch=%s promote=%s",
-            pd.Timestamp(last["end_date"]).date(),
-            last["installed_through"],
-            last["recall_gap"],
-            last["locked_false_alarm_rate"],
-            last["watch"],
-            last["promote"],
-        )
-
-    DROUGHT_GATE_TRAIL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    trail.to_parquet(DROUGHT_GATE_TRAIL_PATH, index=False)
-    # Keep a thin year file so older charts still have a row per calendar year
-    # at the last trailing window that ends in that year.
-    year_rows = []
-    scored = trail.loc[trail["source"].isin(("hist", "live"))]
-    if not scored.empty:
-        scored = scored.copy()
-        scored["year"] = pd.to_datetime(scored["end_date"]).dt.year
-        for year, grp in scored.groupby("year"):
-            row = grp.iloc[-1].to_dict()
-            row["year"] = int(year)
-            year_rows.append(row)
-    yearly = pd.DataFrame(year_rows)
-    yearly.to_parquet(DROUGHT_GATE_YEAR_PATH, index=False)
-    logger.info("wrote %s and %s", DROUGHT_GATE_TRAIL_PATH, DROUGHT_GATE_YEAR_PATH)
-    return trail, yearly
+    return _write_trail(trail)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -281,8 +319,13 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Walk the locked 0.10 gap on trailing 52-week windows."
     )
-    parser.parse_args(argv)
-    trail, yearly = run_gate()
+    parser.add_argument(
+        "--live-only",
+        action="store_true",
+        help="Re-score live weeks only. Keep the already-walked 2000–2020 trail.",
+    )
+    args = parser.parse_args(argv)
+    trail, yearly = run_live_only() if args.live_only else run_gate()
     design = trail.loc[trail["source"] == "design_2000_2012"]
     if not design.empty:
         print(

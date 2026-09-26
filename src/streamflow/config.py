@@ -30,6 +30,10 @@ DAILY_FLOW_PATH = RAW_DIR / "usgs_daily_discharge.parquet"
 WEEKLY_HIST_PATH = PROCESSED_DIR / "weekly_features.parquet"
 WEEKLY_HIST_MATCHED = PROCESSED_DIR / "weekly_hist_matched.parquet"
 WEEKLY_LIVE_PATH = PROCESSED_DIR / "weekly_live.parquet"
+# First Monday week after the frozen Survey table (ends 2020-03-30).
+LIVE_WEEKLY_START = date(2020, 3, 30)
+# Daily sources start one year earlier so 365-day averages are filled.
+LIVE_DAILY_WARMUP_START = date(2019, 3, 1)
 RETRAIN_YEAR_PATH = PROCESSED_DIR / "retrain_design_years.parquet"
 RETRAIN_POLICY_PATH = PROCESSED_DIR / "retrain_design_policies.parquet"
 DROUGHT_YEAR_PATH = PROCESSED_DIR / "drought_design_years.parquet"
