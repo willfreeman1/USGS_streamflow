@@ -4,7 +4,7 @@ A river can be “low” in two different ways. Eight hundred cubic feet per sec
 
 The U.S. Geological Survey already runs a national forecast for this (they call it River DroughtCast). We are not trying to beat it. The point of this project is to show a **model in production**: a forecast that runs on a schedule against new data, not a notebook we ran once and put on a shelf. It notices when it has gone stale, and it is retrained only when a rule we wrote **before** looking at later years says a new version is actually better. The interesting part is that discipline: live downloads, a fair comparison, and a rule that is allowed to say “do not retrain.”
 
-The river and weather files are not in this GitHub folder. The three charts below update when the Monday job finishes. They are also on the [status page](docs/index.html).
+The river and weather files are not in this GitHub folder; [DATA.md](DATA.md) lists their public sources and the download commands. The Monday job regenerates the three charts below, commits `docs/`, and pushes it to GitHub. GitHub Pages updates the [status page](docs/index.html) after that push is deployed.
 
 ## Current monitor
 
@@ -22,18 +22,17 @@ Each point is the last 52 weeks we already know the answer for.
 
 ![False positive rate](docs/charts/false_positives.svg)
 
-Latest window: 14 September 2026. The September 2020 model is still in use. Lead is 16 points, so we do not retrain.
+Latest window: 14 September 2026. The September 2020 model is still in use. Lead is 17 points, so we do not retrain.
 
 ## What the forecast asks
 
-Every week, for each river station in the lower 48 that sits in the Survey’s 3,229-station drought set, we make **two** four-week forecasts:
+Every week, for each river station in the lower 48 that sits in the Survey’s 3,229-station drought set, the production job asks one four-week question:
 
-1. **How dry?** A number from 0 to 100: how unusual will next month’s flow be for this station and time of year. Low is drier.
-2. **Drought, yes or no?** Will that number be at or below 10?
+**Drought, yes or no?** Will the flow percentile four weeks from now be at or below 10?
 
 The 10th percentile means: in the 1980–2020 record, only about one week in ten at that station and season was this dry or drier. That is our yes-or-no definition of drought.
 
-Those are two different models, not one guess used two ways. If we train a model to hit the 0–100 number, then call drought whenever that guess is below 10, we almost never catch the weeks that really were drought. The 0–100 model is pulled toward ordinary weeks, because that is most of the data. The yes-or-no model is trained to look for the dry tail. We keep both: the 0–100 forecast for severity, and the yes-or-no forecast for the drought call. The retrain rule watches the yes-or-no call, because that is the product we refuse to let go stale without a written test.
+During design we also trained a separate model to predict the future 0–100 percentile. If we use that severity estimate and call drought whenever it falls below 10, we almost never catch the weeks that really were drought. The estimate is pulled toward ordinary weeks, because that is most of the data. The direct yes-or-no model is trained to look for the dry tail, so that is the model the Monday production job runs and the retrain rule watches. The 0–100 model remains an offline comparison, not a second production forecast.
 
 ## How we turn flow into “unusual for this time of year”
 
@@ -52,6 +51,8 @@ The Survey published a rich weekly file for 1980 through March 2020 (about 6.7 m
 After 2020 we have to rebuild the same kinds of columns ourselves: current flow from the Survey’s new water API, weather from gridMET, soil water from NASA, snow from the University of Arizona, short-range weather forecasts, seasonal forecasts, and a few climate indexes (El Niño and the like). That live weekly table is now about 1.07 million station-weeks, 30 March 2020 through 14 September 2026, for 3,220 of those stations. Nine of the 3,229 have no current daily flow in our window; that is missing data, not a download we gave up on. NOAA’s half-degree short-range forecast archive starts 23 September 2020, so the first six months of live weeks have weather and flow but not those forecast columns.
 
 We only train and score on columns we can build both ways. Lake storage and one satellite “actual evaporation” column have the same names in the old file and the new file but are **not** the same measurement (different lakes attached, different units). Those stay out of the matched model so a rule written on 1990s data can still be used in 2026.
+
+SMAP, current reservoir storage, SSEBop, and OpenET are exploratory columns in the local live table. They are not inputs to the production classifier, so the Monday job does not refresh them. The scheduled job refreshes only the matched sources that can affect its forecast.
 
 ## How we refuse to cheat
 
@@ -107,7 +108,7 @@ Those last two can both be true at once. Drought is only about one week in ten, 
 
 As the practice decade already showed, retraining every January did **not** catch more droughts. Retraining on a calendar is not the product.
 
-The **0–100 “how dry”** model is scored on a different yardstick: how many points off is the guess, on average (mean absolute error). On 2000–2012, “same as today’s 0–100 number” missed by about **21.2** points. A model trained through 1999, then fed each later week’s current weather and flow, missed by about **19.4**. Retraining that model every January moved the error only a couple of tenths of a point (19.2). So the severity model beats “same as today,” and a calendar retrain barely helps it either. We still do not turn that 0–100 guess into a drought call by asking “is the guess below 10?” — on this decade that catch rate was essentially zero. The two models stay separate.
+The offline **0–100 “how dry”** model is scored on a different yardstick: how many points off is the guess, on average (mean absolute error). On 2000–2012, “same as today’s 0–100 number” missed by about **21.2** points. A model trained through 1999, then fed each later week’s current weather and flow, missed by about **19.4**. Retraining that model every January moved the error only a couple of tenths of a point (19.2). So the severity study beats “same as today,” and a calendar retrain barely helps it either. We still do not turn that 0–100 guess into a drought call by asking “is the guess below 10?” — on this decade that catch rate was essentially zero.
 
 ## When we retrain (the rule we actually use)
 
@@ -132,21 +133,29 @@ We scored 2013 through March 2020 with the **same 1999 model and the same 0.70 l
 
 Then we replayed 2013 onward with the **52-week retrain rule**. The model was retrained on five dates when the lead got too small: 4 May 2015, 2 May 2016, 18 December 2017, 23 September 2019, and 21 September 2020. After each of those we waited 52 weeks. We rebuilt the live weekly table from 30 March 2020, the day the Survey’s frozen file ends, so 2021–2023 sit in the same file as 2024–2026.
 
+## A 2024 data incident
+
+The first live build started in September 2024. Features such as a 365-day flow or rainfall average need a year of earlier observations, so those columns were empty. The historical model had almost never seen every long-average column missing at once and flagged about half of ordinary late-2024 station-weeks as drought.
+
+That was an input-construction failure, not evidence that the model needed retraining. We backfilled daily flow, weather, soil, and snow to March 2019, rebuilt the rolling features, and corrected a weekly-rain scaling mismatch. With the same frozen model and cutoff, the false-alarm rate on those late-2024 weeks fell to about 25%. The production job now checks that its latest labeled window is recent and that every required matched source has at least 98% coverage before it will score.
+
 ## Where we are today
 
-The last 52 weeks we can score end 14 September 2026. The September 2020 model is still the one in use. In those 52 weeks it caught **67%** of real droughts; “already dry” caught **52%**. The lead is **16 percentage points**, which is above 10, so we **do not** retrain. On weeks that were not drought, it wrongly called drought **17%** of the time (false positives).
+The last 52 weeks we can score end 14 September 2026. The September 2020 model is still the one in use. In those 52 weeks it caught **68%** of real droughts; “already dry” caught **52%**. The lead is **17 percentage points**, which is above 10, so we **do not** retrain. On weeks that were not drought, it wrongly called drought **18%** of the time (false positives).
 
 ## Fixed goalposts
 
-We will not change 0.70, the 10-point lead, or the 0.20 input-mix line after seeing more years. We will not hunt new data sources for their own sake. Both forecasts stay: the 0–100 “how dry” number, and the yes-or-no drought call. The retrain rule stays attached to the yes-or-no call.
+We will not change 0.70, the 10-point lead, or the 0.20 input-mix line after seeing more years. We will not hunt new data sources for their own sake. The production forecast remains the yes-or-no drought call; the 0–100 severity model remains an offline comparison.
 
 Those three numbers live in `src/streamflow/model.py` so a later week cannot quietly move them.
 
 ## It runs every Monday
 
-Each Monday the job pulls new flow and weather, rebuilds the live weekly table, scores the last 52 known weeks, applies the retrain rule, updates the chart page in `docs/`, and can send an email that says keep or retrain.
+Each Monday the job pulls new flow and weather, rebuilds the live weekly table, scores the last 52 known weeks, applies the retrain rule, updates the chart page in `docs/`, commits and pushes those files, and can send an email that says keep or retrain. If a required download, freshness check, coverage check, or the weekly rebuild fails, the job sends an error instead of scoring stale inputs.
 
-To run the same programs you need Python 3.11 or newer, a copy of this folder, and the data files that are not on GitHub. Use the project’s own Python environment (a folder named `.venv`), not the Python that came with the computer. Passwords and API keys stay in a local file named `.env`. That file is never uploaded. `.env.example` is a blank list of the names those keys should have.
+The Windows task ignores overlapping runs, starts a missed run when the machine becomes available, retries failures three times, and keeps 60 days of logs under `logs/`. A Tuesday GitHub Actions check fails if the public monitor is more than 21 days behind, so a desktop that never ran cannot fail silently. This is still an unattended single-desktop monitor, not a high-availability service: a prolonged power, hardware, Windows, or home-network failure needs a person to intervene.
+
+The operational setup is Windows-only: it uses Windows Task Scheduler, PowerShell, `curl.exe`, and `.venv\Scripts`. To run it you need Windows 10 or 11, Python 3.11 or newer, a copy of this folder, and the data files that are not on GitHub. Use the project’s own Python environment (a folder named `.venv`), not the Python that came with the computer. Passwords and API keys stay in a local file named `.env`. That file is never uploaded. `.env.example` is a blank list of the names those keys should have.
 
 ```powershell
 python -m venv .venv
@@ -158,7 +167,7 @@ Fill in the Survey water-data key and the NASA Earthdata username and password. 
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\weekly-job.exe
+powershell -File .\scripts\Run-WeeklyJob.ps1
 ```
 
 Email is optional. If you want it, put the destination address and a mail login in `.env`. For Gmail, the password field must be an [App Password](https://myaccount.google.com/apppasswords), not the password you use to sign in. If those fields are blank, the job still runs.
@@ -169,6 +178,10 @@ To start the job every Monday:
 powershell -File .\scripts\Register-WeeklyJob.ps1
 ```
 
+The registration command replaces the existing task. Before relying on it, make sure `git push` works from this Windows account without an interactive login, then run the wrapper once by hand. A failed ingest, stale input, commit, or push is included in the email warning and makes the scheduled task exit with an error.
+
 The first time the job scores without a saved model on disk, it trains a model through 21 September 2020. That can take several minutes. After that, the saved model files live in a local `models/` folder, not on GitHub.
 
 If you already have the historical weekly file on disk and want to replay every keep-or-retrain decision from 2013 onward, the command is `score-drought-gate`.
+
+The fast test suite runs on GitHub Actions without the local data archive. Source-specific integration tests run on the production desktop after backfills. The code is released under the [MIT License](LICENSE).

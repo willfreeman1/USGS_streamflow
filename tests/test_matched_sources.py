@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from datetime import date
+import math
+from typing import cast
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from streamflow.config import RAW_DIR, WEEKLY_HIST_PATH, WEEKLY_LIVE_PATH
+from streamflow.config import (
+    LIVE_DAILY_WARMUP_START,
+    RAW_DIR,
+    WEEKLY_HIST_PATH,
+    WEEKLY_LIVE_PATH,
+)
+from streamflow.ingest_flow import select_daily_discharge
 from streamflow.matched import (
     CLIMATE_PATH,
     GEFS_DAILY,
@@ -23,6 +31,58 @@ from streamflow.matched import (
 
 LEES = "09380000"
 GEFS_END = date(2026, 9, 14)
+pytestmark = pytest.mark.integration
+
+
+def test_select_daily_discharge_prefers_approved_then_established_series():
+    frame = pd.DataFrame(
+        [
+            {
+                "monitoring_location_id": "USGS-00000001",
+                "date": "2026-01-01",
+                "discharge_cfs": 10.0,
+                "qualifier": None,
+                "approval_status": "Approved",
+                "time_series_id": "established",
+            },
+            {
+                "monitoring_location_id": "USGS-00000001",
+                "date": "2026-01-02",
+                "discharge_cfs": 11.0,
+                "qualifier": None,
+                "approval_status": "Approved",
+                "time_series_id": "established",
+            },
+            {
+                "monitoring_location_id": "USGS-00000001",
+                "date": "2026-01-02",
+                "discharge_cfs": 99.0,
+                "qualifier": None,
+                "approval_status": "Approved",
+                "time_series_id": "short-experiment",
+            },
+            {
+                "monitoring_location_id": "USGS-00000002",
+                "date": "2026-01-02",
+                "discharge_cfs": 20.0,
+                "qualifier": None,
+                "approval_status": "Approved",
+                "time_series_id": "approved",
+            },
+            {
+                "monitoring_location_id": "USGS-00000002",
+                "date": "2026-01-02",
+                "discharge_cfs": 30.0,
+                "qualifier": None,
+                "approval_status": "Provisional",
+                "time_series_id": "provisional",
+            },
+        ]
+    )
+    selected = select_daily_discharge(frame)
+    values = selected.set_index(["monitoring_location_id", "date"])["discharge_cfs"]
+    assert values.loc[("USGS-00000001", "2026-01-02")] == 11.0
+    assert values.loc[("USGS-00000002", "2026-01-02")] == 20.0
 
 
 def test_climate_monthly_scales_and_coverage():
@@ -46,7 +106,7 @@ def test_swe_season_and_lees():
     df = pd.read_parquet(SWE_DAILY)
     assert df["StaID"].nunique() == 3229
     assert not df.duplicated(["StaID", "date"]).any()
-    assert pd.to_datetime(df["date"]).min().date() == date(2024, 9, 1)
+    assert pd.to_datetime(df["date"]).min().date() == LIVE_DAILY_WARMUP_START
     assert pd.to_datetime(df["date"]).max().date() >= date(2026, 8, 31)
     assert float(df["swe_mean"].min()) >= 0.0
     assert float(df["swe_mean"].max()) < 3000.0
@@ -67,7 +127,8 @@ def test_nmme_months_and_units():
     df = pd.read_parquet(NMME_MONTHLY)
     assert df["StaID"].nunique() == 3229
     months = df.groupby(["year", "month"]).size()
-    assert len(months) == 25
+    assert len(months) >= 25
+    assert (LIVE_DAILY_WARMUP_START.year, LIVE_DAILY_WARMUP_START.month) in months.index
     assert (2024, 9) in months.index
     assert (2026, 9) in months.index
     t = df["tref15day_nmme_anom"]
@@ -132,10 +193,14 @@ def test_attach_helpers_on_tiny_week():
     weekly = attach_swe(weekly)
     weekly = attach_climate(weekly)
     weekly = add_rolls(weekly)
-    assert weekly.loc[0, "S-SqKm"] > 0
-    assert np.isfinite(weekly.loc[0, "Flow_mm"])
-    assert weekly.loc[0, "swe_mean"] >= 0
-    assert 24.0 < weekly.loc[0, "ENSO"] < 31.0
+    area = cast(float, weekly.loc[0, "S-SqKm"])
+    flow_mm = cast(float, weekly.loc[0, "Flow_mm"])
+    swe = cast(float, weekly.loc[0, "swe_mean"])
+    enso = cast(float, weekly.loc[0, "ENSO"])
+    assert area > 0
+    assert math.isfinite(flow_mm)
+    assert swe >= 0
+    assert 24.0 < enso < 31.0
     assert WEEKLY_HIST_PATH.exists()
     assert WEEKLY_LIVE_PATH.exists()
     assert RAW_DIR.exists()

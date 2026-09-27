@@ -14,6 +14,7 @@ from streamflow.config import (
     RAW_DIR,
     WEEKLY_HIST_PATH,
 )
+from streamflow.storage import atomic_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -282,12 +283,11 @@ def add_flow_scores(
 
     flow = daily.dropna(subset=["discharge_cfs"]).copy()
     flow["StaID"] = flow["StaID"].astype(str)
-    flow = (
-        flow.groupby(["StaID", "date"], sort=False)["discharge_cfs"]
-        .mean()
-        .reset_index()
-        .sort_values(["StaID", "date"])
-    )
+    if flow.duplicated(["StaID", "date"]).any():
+        raise RuntimeError(
+            "Daily discharge still has multiple series per station-day."
+        )
+    flow = flow[["StaID", "date", "discharge_cfs"]].sort_values(["StaID", "date"])
     flow["mean_value_7d"] = flow.groupby("StaID", sort=False)["discharge_cfs"].transform(
         lambda s: s.rolling(7, min_periods=4).mean()
     )
@@ -401,7 +401,7 @@ def write_hist_matched(
     frame = table.to_pandas()
     frame = attach_static(frame)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(out_path, index=False)
+    atomic_parquet(frame, out_path)
     logger.info(
         "wrote matched history %s rows %s cols -> %s (%.1f GB)",
         len(frame),

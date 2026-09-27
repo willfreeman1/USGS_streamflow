@@ -25,6 +25,7 @@ import pandas as pd
 import rasterio
 
 from streamflow.config import RAW_DIR
+from streamflow.storage import atomic_parquet
 from streamflow.zonal import basin_cell_index, basin_means, north_up_lat
 
 logger = logging.getLogger(__name__)
@@ -284,7 +285,7 @@ def _flush_gefs(rows: list[dict], out_path: Path) -> None:
             .sort_values(["StaID", "date"])
             .drop_duplicates(["StaID", "date"], keep="last")
         )
-    frame.to_parquet(out_path, index=False)
+    atomic_parquet(frame, out_path)
     logger.info("flushed GEFS -> %s (%s rows)", out_path, len(frame))
 
 

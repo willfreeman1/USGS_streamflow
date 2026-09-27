@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 import pandas as pd
 
 from streamflow.config import BOOTSTRAP_INSTALLED, WEEKLY_HIST_MATCHED, WEEKLY_LIVE_PATH
 from streamflow.drought_gate import (
     _align,
     _consecutive_runs,
-    _prepare,
+    _stitch_prepare,
     _train_through,
     _window_metrics,
 )
 from streamflow.model import (
     DESIGN_FIT_END,
+    HOLD_END,
     LOCKED_DROUGHT_CUTOFF,
     LOCKED_RECALL_GAP_MIN,
     LOCKED_TRAIL_WEEKS,
@@ -27,6 +29,24 @@ from streamflow.model import (
 from streamflow.registry import load_model, load_registry, save_model
 
 logger = logging.getLogger(__name__)
+
+MAX_LABELED_AGE_DAYS = 21
+MIN_REQUIRED_COVERAGE = 0.98
+REQUIRED_RECENT_COLUMNS = [
+    TARGET_COL,
+    "Flow_cfs",
+    "tmmx_mean",
+    "tmmn_mean",
+    "pr_mean",
+    "pet_mean",
+    "soilm_0_10cm_mean",
+    "soilm_10_40cm_mean",
+    "soilm_40_100cm_mean",
+    "swe_mean",
+    "tmax7day_gefs_mean",
+    "tref15day_nmme_mean",
+    "ENSO",
+]
 
 
 def weeks_since(start, end) -> int:
@@ -49,28 +69,56 @@ def promote_allowed(
     return bool(recall_gap < LOCKED_RECALL_GAP_MIN)
 
 
+def validate_recent_inputs(
+    frame: pd.DataFrame,
+    dates: list[pd.Timestamp],
+    *,
+    as_of: date | None = None,
+) -> None:
+    """Fail closed when the gate window is stale or a matched source collapsed."""
+    if not dates:
+        raise RuntimeError("No labeled live weeks are available.")
+    as_of = as_of or date.today()
+    end = pd.Timestamp(dates[-1]).date()
+    age = (as_of - end).days
+    if age < 0 or age > MAX_LABELED_AGE_DAYS:
+        raise RuntimeError(
+            f"Latest labeled week is {end} ({age} days from {as_of}); "
+            f"expected no more than {MAX_LABELED_AGE_DAYS} days of lag."
+        )
+    window = frame.loc[frame["target_date"].isin(dates)]
+    failures: list[str] = []
+    for column in REQUIRED_RECENT_COLUMNS:
+        if column not in window:
+            failures.append(f"{column}=missing")
+            continue
+        coverage = float(window[column].notna().mean())
+        if coverage < MIN_REQUIRED_COVERAGE:
+            failures.append(f"{column}={coverage:.1%}")
+    if failures:
+        raise RuntimeError(
+            "Required recent feature coverage is below "
+            f"{MIN_REQUIRED_COVERAGE:.0%}: {', '.join(failures)}"
+        )
+
+
 def bootstrap_model(
-    hist: pd.DataFrame,
+    training: pd.DataFrame,
     feats: list[str],
-    live: pd.DataFrame | None = None,
     through=BOOTSTRAP_INSTALLED,
 ):
-    train = _train_through(hist, through)
-    if live is not None:
-        extra = _train_through(live, through)
-        if not extra.empty:
-            train = pd.concat([train, extra], ignore_index=True)
+    train = _train_through(training, through)
     logger.info("bootstrap trees through %s on %s rows", through, len(train))
     model = fit_lgbm_drought(train, feats)
     save_model(model, through, last_promote=through)
     return model
 
 
-def ensure_model(hist: pd.DataFrame, feats: list[str], live: pd.DataFrame | None):
+def ensure_model(training: pd.DataFrame, feats: list[str]):
     state = load_registry()
     if state is not None:
-        return load_model(), state
-    model = bootstrap_model(hist, feats, live)
+        return load_model(expected_features=feats), state
+    model = bootstrap_model(training, feats)
     state = load_registry()
     if state is None:
         raise RuntimeError("bootstrap did not write models/registry.json")
@@ -83,18 +131,20 @@ def score_current_window(
     *,
     allow_promote: bool = True,
 ) -> dict:
-    hist = _prepare(hist_path)
     if not live_path.exists():
         raise RuntimeError(f"Missing {live_path}; run build-weekly --from-daily")
-    live = _prepare(live_path)
-    feats = feature_columns(hist)
-    model, state = ensure_model(hist, feats, live)
+    combo = _stitch_prepare(hist_path, live_path)
+    feats = feature_columns(combo)
+    model, state = ensure_model(combo, feats)
     if state is None:
         raise RuntimeError("Model registry is empty after load.")
     installed = state["installed_through"]
     last_promote = state.get("last_promote") or installed
-    ref_flow = _train_through(hist, DESIGN_FIT_END)[TARGET_COL].to_numpy()
+    ref_flow = _train_through(combo, DESIGN_FIT_END)[TARGET_COL].to_numpy()
 
+    live = combo.loc[
+        combo["target_date"] > pd.Timestamp(HOLD_END)
+    ].reset_index(drop=True)
     aligned = _align(live, feats)
     proba = predict_drought_proba(model, aligned, feats)
     hat = proba >= LOCKED_DROUGHT_CUTOFF
@@ -110,6 +160,7 @@ def score_current_window(
             "warnings": [],
         }
     run = runs[-1]
+    validate_recent_inputs(live, run[-LOCKED_TRAIL_WEEKS:])
     end = pd.Timestamp(run[-1])
     if len(run) < LOCKED_TRAIL_WEEKS:
         window = run
@@ -139,10 +190,7 @@ def score_current_window(
         )
     )
     if promote:
-        train = pd.concat(
-            [_train_through(hist, end), _train_through(live, end)],
-            ignore_index=True,
-        )
+        train = _train_through(combo, end)
         logger.info("promote at %s gap=%.3f; fitting %s rows", end.date(), stats["recall_gap"], len(train))
         model = fit_lgbm_drought(train, feats)
         save_model(model, end.date(), last_promote=end.date())

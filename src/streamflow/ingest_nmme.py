@@ -20,6 +20,7 @@ import pandas as pd
 import xarray as xr
 
 from streamflow.config import RAW_DIR, WEEKLY_HIST_PATH
+from streamflow.storage import atomic_parquet
 from streamflow.zonal import basin_cell_index, north_up_lat
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,7 @@ def build_basin_monthly(
         .reset_index(drop=True)
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(out_path, index=False)
+    atomic_parquet(frame, out_path)
     logger.info(
         "wrote %s rows (%s stations) -> %s (%.1f MB)",
         len(frame),

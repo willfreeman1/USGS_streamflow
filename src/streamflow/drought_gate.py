@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -16,10 +15,12 @@ from streamflow.config import (
     WEEKLY_LIVE_PATH,
 )
 from streamflow.drought_monitor import population_shift
+from streamflow.storage import atomic_parquet
 from streamflow.model import (
     DESIGN_FIT_END,
     DESIGN_WALK_END,
     DESIGN_WALK_START,
+    HOLD_END,
     HOLD_START,
     LOCKED_DROUGHT_CUTOFF,
     LOCKED_FLOW_SHIFT_WATCH,
@@ -125,8 +126,7 @@ def _walk_segment(
     model,
     installed_end,
     ref_flow: np.ndarray,
-    hist: pd.DataFrame,
-    live: pd.DataFrame | None,
+    training: pd.DataFrame,
     allow_promote: bool,
     source: str,
     min_promote_date=None,
@@ -156,18 +156,20 @@ def _walk_segment(
             rows.append(
                 {
                     "end_date": end,
-                    "source": source,
+                    "source": (
+                        "hist"
+                        if source == "gate" and end <= pd.Timestamp(HOLD_END)
+                        else "live"
+                        if source == "gate"
+                        else source
+                    ),
                     "installed_through": installed_end,
                     "promote": promote,
                     **stats,
                 }
             )
             if promote:
-                train = _train_through(hist, end)
-                if live is not None:
-                    extra = _train_through(live, end)
-                    if not extra.empty:
-                        train = pd.concat([train, extra], ignore_index=True)
+                train = _train_through(training, end)
                 logger.info(
                     "promote at %s gap=%.3f; fitting %s rows through that week",
                     end.date(),
@@ -203,7 +205,7 @@ def _write_trail(trail: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         )
 
     DROUGHT_GATE_TRAIL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    trail.to_parquet(DROUGHT_GATE_TRAIL_PATH, index=False)
+    atomic_parquet(trail, DROUGHT_GATE_TRAIL_PATH)
     year_rows = []
     scored = trail.loc[trail["source"].isin(("hist", "live"))]
     if not scored.empty:
@@ -211,10 +213,10 @@ def _write_trail(trail: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         scored["year"] = pd.to_datetime(scored["end_date"]).dt.year
         for year, grp in scored.groupby("year"):
             row = grp.iloc[-1].to_dict()
-            row["year"] = int(year)
+            row["year"] = int(str(year))
             year_rows.append(row)
     yearly = pd.DataFrame(year_rows)
-    yearly.to_parquet(DROUGHT_GATE_YEAR_PATH, index=False)
+    atomic_parquet(yearly, DROUGHT_GATE_YEAR_PATH)
     logger.info("wrote %s and %s", DROUGHT_GATE_TRAIL_PATH, DROUGHT_GATE_YEAR_PATH)
     return trail, yearly
 
@@ -223,52 +225,9 @@ def run_live_only(
     hist_path=WEEKLY_HIST_MATCHED,
     live_path=WEEKLY_LIVE_PATH,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Re-walk live weeks only. Keeps the already-scored 2000–2020 trail."""
-    if not DROUGHT_GATE_TRAIL_PATH.exists():
-        raise RuntimeError(f"Missing {DROUGHT_GATE_TRAIL_PATH}; run a full score-drought-gate first")
-    if not live_path.exists():
-        raise RuntimeError(f"Missing {live_path}; run build-weekly --from-daily")
-
-    from streamflow.live_gate import ensure_model
-    from streamflow.registry import load_model, model_path_for
-
-    old = pd.read_parquet(DROUGHT_GATE_TRAIL_PATH)
-    kept = old.loc[old["source"] != "live"].copy()
-    logger.info("stitching hist and live so 2020–2021 is one run")
-    combo = _stitch_prepare(hist_path, live_path)
-    hist = combo.loc[combo["target_date"] <= pd.Timestamp("2020-03-30")]
-    feats = feature_columns(hist)
-    ref_flow = _train_through(hist, DESIGN_FIT_END)[TARGET_COL].to_numpy()
-    last_hist_promote = date(2019, 9, 23)
-    hist_model = model_path_for(last_hist_promote)
-    if hist_model.exists():
-        model = load_model(hist_model)
-    else:
-        model, _state = ensure_model(hist, feats, combo)
-    # 52 weeks before the first Monday after the hist trail ends.
-    walk_start = pd.Timestamp("2020-03-30") - pd.Timedelta(weeks=LOCKED_TRAIL_WEEKS - 1)
-    walk = combo.loc[combo["target_date"] >= walk_start]
-    cooldown = last_hist_promote + timedelta(weeks=LOCKED_TRAIL_WEEKS)
-    live_rows, _, _ = _walk_segment(
-        walk,
-        feats=feats,
-        model=model,
-        installed_end=last_hist_promote,
-        ref_flow=ref_flow,
-        hist=hist,
-        live=combo,
-        allow_promote=True,
-        source="live",
-        min_promote_date=cooldown,
-    )
-    live_rows = [
-        row
-        for row in live_rows
-        if pd.Timestamp(row["end_date"]) > pd.Timestamp("2020-03-30")
-    ]
-    trail = pd.concat([kept, pd.DataFrame(live_rows)], ignore_index=True)
-    trail = trail.sort_values("end_date").reset_index(drop=True)
-    return _write_trail(trail)
+    """Compatibility alias for the canonical stitched replay."""
+    logger.info("--live-only now runs the canonical stitched replay")
+    return run_gate(hist_path, live_path)
 
 
 def run_gate(
@@ -278,11 +237,14 @@ def run_gate(
     if not hist_path.exists():
         raise RuntimeError(f"Missing {hist_path}; run build-weekly --matched-history")
 
-    logger.info("loading %s", hist_path)
-    hist = _prepare(hist_path)
-    live = _prepare(live_path) if live_path.exists() else None
-    feats = feature_columns(hist)
-    initial = _train_through(hist, DESIGN_FIT_END)
+    logger.info("loading and stitching %s with %s", hist_path, live_path)
+    combo = (
+        _stitch_prepare(hist_path, live_path)
+        if live_path.exists()
+        else _prepare(hist_path)
+    )
+    feats = feature_columns(combo)
+    initial = _train_through(combo, DESIGN_FIT_END)
     logger.info(
         "train %s rows through %s; trail %s weeks; promote if gap < %.2f",
         len(initial),
@@ -293,8 +255,8 @@ def run_gate(
     model = fit_lgbm_drought(initial, feats)
     ref_flow = initial[TARGET_COL].to_numpy()
 
-    design = hist.loc[
-        hist["target_date"].between(
+    design = combo.loc[
+        combo["target_date"].between(
             pd.Timestamp(DESIGN_WALK_START), pd.Timestamp(DESIGN_WALK_END)
         )
     ]
@@ -304,8 +266,7 @@ def run_gate(
         model=model,
         installed_end=DESIGN_FIT_END,
         ref_flow=ref_flow,
-        hist=hist,
-        live=None,
+        training=combo,
         allow_promote=False,
         source="design_2000_2012",
     )
@@ -319,33 +280,19 @@ def run_gate(
         )
 
     installed_end = DESIGN_FIT_END
-    gate_hist = hist.loc[hist["target_date"] >= pd.Timestamp(HOLD_START)]
-    hist_rows, model, installed_end = _walk_segment(
-        gate_hist,
+    gate = combo.loc[combo["target_date"] >= pd.Timestamp(HOLD_START)]
+    gate_rows, model, installed_end = _walk_segment(
+        gate,
         feats=feats,
         model=model,
         installed_end=installed_end,
         ref_flow=ref_flow,
-        hist=hist,
-        live=live,
+        training=combo,
         allow_promote=True,
-        source="hist",
+        source="gate",
     )
-    live_rows: list[dict] = []
-    if live is not None:
-        live_rows, model, installed_end = _walk_segment(
-            live,
-            feats=feats,
-            model=model,
-            installed_end=installed_end,
-            ref_flow=ref_flow,
-            hist=hist,
-            live=live,
-            allow_promote=True,
-            source="live",
-        )
 
-    trail = pd.DataFrame(design_rows + hist_rows + live_rows)
+    trail = pd.DataFrame(design_rows + gate_rows)
     return _write_trail(trail)
 
 
@@ -360,7 +307,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--live-only",
         action="store_true",
-        help="Re-score live weeks only. Keep the already-walked 2000–2020 trail.",
+        help="Compatibility alias for the canonical full stitched replay.",
     )
     args = parser.parse_args(argv)
     trail, yearly = run_live_only() if args.live_only else run_gate()

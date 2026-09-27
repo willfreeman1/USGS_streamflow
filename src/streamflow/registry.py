@@ -34,7 +34,9 @@ def load_registry(path: Path = REGISTRY_PATH) -> dict | None:
 def save_registry(state: dict, path: Path = REGISTRY_PATH) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     clean = {key: _json_ready(val) for key, val in state.items()}
-    path.write_text(json.dumps(clean, indent=2) + "\n", encoding="utf-8")
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(clean, indent=2) + "\n", encoding="utf-8")
+    temp.replace(path)
     return path
 
 
@@ -46,24 +48,50 @@ def model_path_for(installed_through) -> Path:
 def save_model(model: lgb.Booster, installed_through, last_promote=None) -> dict:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     dest = model_path_for(installed_through)
-    model.save_model(str(dest))
+    temp = dest.with_suffix(dest.suffix + ".tmp")
+    model.save_model(str(temp))
+    temp.replace(dest)
     state = {
         "installed_through": installed_through,
         "last_promote": last_promote or installed_through,
         "model_path": str(dest),
         "bootstrap_if_missing": str(BOOTSTRAP_INSTALLED),
+        "feature_names": model.feature_name(),
     }
     save_registry(state)
     logger.info("saved model %s", dest)
     return state
 
 
-def load_model(path: Path | None = None) -> lgb.Booster:
+def _safe_feature_names(feature_names: list[str]) -> list[str]:
+    return [name.replace("-", "_") for name in feature_names]
+
+
+def load_model(
+    path: Path | None = None,
+    *,
+    expected_features: list[str] | None = None,
+) -> lgb.Booster:
     state = load_registry()
     if path is None:
         if state is None:
-            raise RuntimeError("No saved model yet. Run weekly-job once to grow the 2019 trees.")
+            raise RuntimeError(
+                "No saved model yet. Run weekly-job once to grow the bootstrap trees."
+            )
         path = Path(state["model_path"])
     if not path.exists():
         raise RuntimeError(f"Missing model file {path}")
-    return lgb.Booster(model_file=str(path))
+    model = lgb.Booster(model_file=str(path))
+    if expected_features is not None:
+        expected = _safe_feature_names(expected_features)
+        actual = model.feature_name()
+        if actual != expected:
+            missing = [name for name in expected if name not in actual]
+            extra = [name for name in actual if name not in expected]
+            raise RuntimeError(
+                "Saved model feature schema does not match the current matched "
+                f"table (expected {len(expected)}, model has {len(actual)}; "
+                f"missing={missing[:5]}, extra={extra[:5]}). "
+                "Rebuild the canonical gate before scoring."
+            )
+    return model

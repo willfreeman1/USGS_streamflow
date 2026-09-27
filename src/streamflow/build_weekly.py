@@ -31,9 +31,11 @@ from streamflow.config import (
     WEEKLY_LIVE_PATH,
 )
 from streamflow.ingest_gridmet import OUT_DAILY as GRIDMET_DAILY
+from streamflow.ingest_flow import select_daily_discharge
 from streamflow.ingest_nldas import OUT_DAILY as NLDAS_DAILY
 from streamflow.ingest_openet import attach_openet_to_gages
 from streamflow.ingest_smap import OUT_DAILY as SMAP_DAILY
+from streamflow.storage import atomic_parquet
 from streamflow.matched import (
     add_flow_scores,
     add_rolls,
@@ -157,8 +159,16 @@ def build_weekly_from_daily(
 
     daily = pd.read_parquet(
         daily_path,
-        columns=["monitoring_location_id", "date", "discharge_cfs"],
+        columns=[
+            "monitoring_location_id",
+            "date",
+            "discharge_cfs",
+            "qualifier",
+            "approval_status",
+            "time_series_id",
+        ],
     )
+    daily = select_daily_discharge(daily)
     daily["StaID"] = daily["monitoring_location_id"].map(_to_sta_id)
     daily["date"] = pd.to_datetime(daily["date"])
     weekly = _daily_to_monday_weeks(daily)
@@ -206,7 +216,7 @@ def build_weekly_from_daily(
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    scored.to_parquet(out_path, index=False)
+    atomic_parquet(scored, out_path)
     logger.info(
         "wrote %s rows (%s gages) %s to %s to %s (%.1f MB)",
         len(scored),
@@ -235,12 +245,11 @@ def _climatology(
 
 def _daily_to_monday_weeks(daily: pd.DataFrame) -> pd.DataFrame:
     frame = daily.dropna(subset=["discharge_cfs"]).copy()
-    # A few gages have two USGS daily series; one value per site-day.
-    frame = (
-        frame.groupby(["StaID", "date"], sort=False)["discharge_cfs"]
-        .mean()
-        .reset_index()
-    )
+    if frame.duplicated(["StaID", "date"]).any():
+        raise RuntimeError(
+            "Daily discharge still has multiple series per station-day; "
+            "run select_daily_discharge before weekly aggregation."
+        )
     frame["week_dt"] = frame["date"] - pd.to_timedelta(
         frame["date"].dt.dayofweek, unit="D"
     )

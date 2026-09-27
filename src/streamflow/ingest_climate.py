@@ -16,6 +16,7 @@ import pandas as pd
 import requests
 
 from streamflow.config import RAW_DIR
+from streamflow.storage import atomic_parquet
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ def build_monthly(out_path: Path = OUT_PATH) -> Path:
         frame = frame.merge(extra, on=["year", "month"], how="outer")
     frame = frame.sort_values(["year", "month"]).reset_index(drop=True)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(out_path, index=False)
+    atomic_parquet(frame, out_path)
     last = frame.dropna(how="all", subset=["ENSO", "PNA", "PDO", "AMO", "sunspots"]).iloc[-1]
     logger.info(
         "wrote %s months %s-%02d to %s-%02d -> %s",

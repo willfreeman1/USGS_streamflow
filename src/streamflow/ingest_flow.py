@@ -9,6 +9,7 @@ import argparse
 import logging
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -20,10 +21,68 @@ from streamflow.config import (
     USGS_DAILY_URL,
 )
 from streamflow.usgs_client import UsgsClient
+from streamflow.storage import atomic_parquet
 
 logger = logging.getLogger(__name__)
 
 OUT_PATH = RAW_DIR / "usgs_daily_discharge.parquet"
+
+
+def select_daily_discharge(frame: pd.DataFrame) -> pd.DataFrame:
+    """Choose one authoritative discharge series per station-day.
+
+    USGS can return overlapping daily-mean series for one station. Prefer an
+    approved, available value, then the series with the longest coverage at
+    that station. The coverage rule rejects short experimental/transition
+    series when the established record is available. The series id provides a
+    deterministic final tie-break; values are never averaged across series.
+    """
+    if frame.empty or "time_series_id" not in frame.columns:
+        return frame
+    out = frame.copy()
+    out["_series_id"] = out["time_series_id"].fillna("").astype(str)
+    out["_approved"] = (
+        out.get("approval_status", pd.Series("", index=out.index))
+        .fillna("")
+        .astype(str)
+        .str.casefold()
+        .eq("approved")
+    )
+    out["_series_days"] = out.groupby(
+        ["monitoring_location_id", "_series_id"], dropna=False
+    )["date"].transform("nunique")
+    qualifier = (
+        out.get("qualifier", pd.Series("", index=out.index))
+        .fillna("")
+        .astype(str)
+        .str.upper()
+    )
+    out["_usable"] = ~qualifier.str.contains("UNAVAIL", regex=False)
+    before = len(out)
+    out = (
+        out.sort_values(
+            [
+                "monitoring_location_id",
+                "date",
+                "_approved",
+                "_usable",
+                "_series_days",
+                "_series_id",
+            ],
+            ascending=[True, True, False, False, False, True],
+        )
+        .drop_duplicates(["monitoring_location_id", "date"], keep="first")
+        .drop(columns=["_series_id", "_approved", "_series_days", "_usable"])
+        .reset_index(drop=True)
+    )
+    removed = before - len(out)
+    if removed:
+        logger.info(
+            "selected one USGS discharge series per station-day; "
+            "removed %s overlapping rows",
+            removed,
+        )
+    return out
 
 
 def ingest_daily_discharge(
@@ -116,7 +175,7 @@ def _ingest_window(
             )
             .reset_index(drop=True)
         )
-    frame.to_parquet(out_path, index=False)
+    atomic_parquet(frame, out_path)
     logger.info(
         "wrote %s rows (%s sites) to %s",
         len(frame),
@@ -150,7 +209,7 @@ def _week_windows(start: date, end: date) -> list[tuple[date, date]]:
     return windows
 
 
-def _to_float(value: object) -> float | None:
+def _to_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     try:
