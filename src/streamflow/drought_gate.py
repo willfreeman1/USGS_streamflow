@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
 
 from streamflow.config import (
-    BOOTSTRAP_INSTALLED,
     DROUGHT_GATE_TRAIL_PATH,
     DROUGHT_GATE_YEAR_PATH,
     WEEKLY_HIST_MATCHED,
@@ -46,6 +45,23 @@ def _prepare(path) -> pd.DataFrame:
     raw = pd.read_parquet(path)
     raw["Date"] = pd.to_datetime(raw["Date"])
     frame = add_drought_label(add_lead_target(raw))
+    return frame.dropna(subset=["target", "drought"])
+
+
+def _stitch_prepare(hist_path, live_path) -> pd.DataFrame:
+    """One labeled table so March 2020 hist weeks can use April 2020 live outcomes."""
+    hist = pd.read_parquet(hist_path)
+    live = pd.read_parquet(live_path)
+    hist["Date"] = pd.to_datetime(hist["Date"])
+    live["Date"] = pd.to_datetime(live["Date"])
+    cols = [c for c in hist.columns if c in live.columns]
+    combo = pd.concat([hist[cols], live[cols]], ignore_index=True)
+    combo = (
+        combo.sort_values(["StaID", "Date"])
+        .drop_duplicates(["StaID", "Date"], keep="last")
+        .reset_index(drop=True)
+    )
+    frame = add_drought_label(add_lead_target(combo))
     return frame.dropna(subset=["target", "drought"])
 
 
@@ -113,6 +129,7 @@ def _walk_segment(
     live: pd.DataFrame | None,
     allow_promote: bool,
     source: str,
+    min_promote_date=None,
 ) -> tuple[list[dict], object, object]:
     if frame.empty:
         return [], model, installed_end
@@ -129,12 +146,13 @@ def _walk_segment(
         for end_i in range(LOCKED_TRAIL_WEEKS - 1, len(run)):
             window = run[end_i + 1 - LOCKED_TRAIL_WEEKS : end_i + 1]
             stats = _window_metrics(frame, hat, pers, window, ref_flow)
+            end = pd.Timestamp(window[-1])
             promote = bool(
                 allow_promote
                 and end_i >= next_promote_i
+                and (min_promote_date is None or end >= pd.Timestamp(min_promote_date))
                 and stats["recall_gap"] < LOCKED_RECALL_GAP_MIN
             )
-            end = pd.Timestamp(window[-1])
             rows.append(
                 {
                     "end_date": end,
@@ -158,6 +176,9 @@ def _walk_segment(
                 )
                 model = fit_lgbm_drought(train, feats)
                 installed_end = end.date()
+                from streamflow.registry import save_model
+
+                save_model(model, installed_end, last_promote=installed_end)
                 next_promote_i = end_i + LOCKED_TRAIL_WEEKS
                 later = frame["target_date"] > end
                 if later.any():
@@ -209,25 +230,42 @@ def run_live_only(
         raise RuntimeError(f"Missing {live_path}; run build-weekly --from-daily")
 
     from streamflow.live_gate import ensure_model
+    from streamflow.registry import load_model, model_path_for
 
     old = pd.read_parquet(DROUGHT_GATE_TRAIL_PATH)
     kept = old.loc[old["source"] != "live"].copy()
-    hist = _prepare(hist_path)
-    live = _prepare(live_path)
+    logger.info("stitching hist and live so 2020–2021 is one run")
+    combo = _stitch_prepare(hist_path, live_path)
+    hist = combo.loc[combo["target_date"] <= pd.Timestamp("2020-03-30")]
     feats = feature_columns(hist)
     ref_flow = _train_through(hist, DESIGN_FIT_END)[TARGET_COL].to_numpy()
-    model, _state = ensure_model(hist, feats, live)
+    last_hist_promote = date(2019, 9, 23)
+    hist_model = model_path_for(last_hist_promote)
+    if hist_model.exists():
+        model = load_model(hist_model)
+    else:
+        model, _state = ensure_model(hist, feats, combo)
+    # 52 weeks before the first Monday after the hist trail ends.
+    walk_start = pd.Timestamp("2020-03-30") - pd.Timedelta(weeks=LOCKED_TRAIL_WEEKS - 1)
+    walk = combo.loc[combo["target_date"] >= walk_start]
+    cooldown = last_hist_promote + timedelta(weeks=LOCKED_TRAIL_WEEKS)
     live_rows, _, _ = _walk_segment(
-        live,
+        walk,
         feats=feats,
         model=model,
-        installed_end=BOOTSTRAP_INSTALLED,
+        installed_end=last_hist_promote,
         ref_flow=ref_flow,
         hist=hist,
-        live=live,
+        live=combo,
         allow_promote=True,
         source="live",
+        min_promote_date=cooldown,
     )
+    live_rows = [
+        row
+        for row in live_rows
+        if pd.Timestamp(row["end_date"]) > pd.Timestamp("2020-03-30")
+    ]
     trail = pd.concat([kept, pd.DataFrame(live_rows)], ignore_index=True)
     trail = trail.sort_values("end_date").reset_index(drop=True)
     return _write_trail(trail)

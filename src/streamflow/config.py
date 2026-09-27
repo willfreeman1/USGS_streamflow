@@ -50,7 +50,7 @@ REGISTRY_PATH = MODELS_DIR / "registry.json"
 LIVE_DECISIONS_PATH = PROCESSED_DIR / "live_decisions.parquet"
 DOCS_DIR = ROOT / "docs"
 # Last time the locked rule retrained in the historical replay.
-BOOTSTRAP_INSTALLED = date(2019, 9, 23)
+BOOTSTRAP_INSTALLED = date(2020, 9, 21)
 
 RESERVOIR_BASIN_DAILY = RAW_DIR / "reservoir_basin_daily.parquet"
 SSEBOP_BASIN_MONTHLY = RAW_DIR / "ssebop_basin_monthly.parquet"

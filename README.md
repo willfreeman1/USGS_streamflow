@@ -22,7 +22,7 @@ Each point is the last 52 weeks we already know the answer for.
 
 ![False positive rate](docs/charts/false_positives.svg)
 
-Latest window: 14 September 2026. The September 2019 model is still in use. Lead is 16 points, so we do not retrain.
+Latest window: 14 September 2026. The September 2020 model is still in use. Lead is 16 points, so we do not retrain.
 
 ## What the forecast asks
 
@@ -130,11 +130,11 @@ On 2000–2012, that 52-week lead once fell as low as 7 percentage points. The 1
 
 We scored 2013 through March 2020 with the **same 1999 model and the same 0.70 line**, without peeking to change 0.70. That stretch had 101,235 drought station-weeks. The model caught 59% of the weeks that really were drought. On the weeks that were **not** drought, it wrongly called drought 7.8% of the time. Those wrong calls are **false positives**: the model said drought and the river was not in drought. “Already dry” caught 46% of real droughts and had a 5% false-positive rate (wrongly called drought on 5% of non-drought weeks). The rule held. We did not move 0.70 after seeing those years.
 
-Then we replayed 2013 onward with the **52-week retrain rule**. The model was retrained on four dates when the lead got too small: 4 May 2015, 2 May 2016, 18 December 2017, and 23 September 2019. After each of those we waited 52 weeks. We rebuilt the live weekly table from 30 March 2020, the day the Survey’s frozen file ends, so 2021–2023 sit in the same file as 2024–2026. The first 52-week scored window on that live file ends 19 April 2021. The rule did not retrain again.
+Then we replayed 2013 onward with the **52-week retrain rule**. The model was retrained on five dates when the lead got too small: 4 May 2015, 2 May 2016, 18 December 2017, 23 September 2019, and 21 September 2020. After each of those we waited 52 weeks. We rebuilt the live weekly table from 30 March 2020, the day the Survey’s frozen file ends, so 2021–2023 sit in the same file as 2024–2026.
 
 ## Where we are today
 
-The last 52 weeks we can score end 14 September 2026. The September 2019 model is still the one in use. In those 52 weeks it caught **68%** of real droughts; “already dry” caught **52%**. The lead is **16 percentage points**, which is above 10, so we **do not** retrain. On weeks that were not drought, it wrongly called drought **18%** of the time (false positives). The mix of high and low flows in those weeks looks a bit unlike 1980–1999 (just over the 0.20 line). That is a reason to keep an eye on how the live file is built, not to replace the model.
+The last 52 weeks we can score end 14 September 2026. The September 2020 model is still the one in use. In those 52 weeks it caught **67%** of real droughts; “already dry” caught **52%**. The lead is **16 percentage points**, which is above 10, so we **do not** retrain. On weeks that were not drought, it wrongly called drought **17%** of the time (false positives).
 
 ## Fixed goalposts
 
@@ -169,6 +169,6 @@ To start the job every Monday:
 powershell -File .\scripts\Register-WeeklyJob.ps1
 ```
 
-The first time the job scores without a saved model on disk, it trains a model through 23 September 2019. That can take several minutes. After that, the saved model files live in a local `models/` folder, not on GitHub.
+The first time the job scores without a saved model on disk, it trains a model through 21 September 2020. That can take several minutes. After that, the saved model files live in a local `models/` folder, not on GitHub.
 
 If you already have the historical weekly file on disk and want to replay every keep-or-retrain decision from 2013 onward, the command is `score-drought-gate`.
