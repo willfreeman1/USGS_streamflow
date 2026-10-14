@@ -28,6 +28,8 @@ OUT_DAILY = RAW_DIR / "swe_basin_daily.parquet"
 BASE = "https://climate.arizona.edu/data/UA_SWE"
 USER_AGENT = "usgs-streamflow-monitor (local)"
 SWE_RES = 1.0 / 24.0
+# Prefer the later, reviewed file. "early" is what Arizona publishes first.
+DAILY_SUFFIXES = ("stable", "provisional", "early")
 
 
 def _curl(url: str, dest: Path, *, retries: int = 6, retry_all: bool = True) -> None:
@@ -69,7 +71,7 @@ def download_daily(day: date) -> Path | None:
     if dest.exists() and dest.stat().st_size > 10_000:
         return dest
     wy = day.year + 1 if day.month >= 10 else day.year
-    for suffix in ("stable", "provisional"):
+    for suffix in DAILY_SUFFIXES:
         name = f"UA_SWE_Depth_4km_v1_{day:%Y%m%d}_{suffix}.nc"
         url = f"{BASE}/DailyData_4km/WY{wy}/{name}"
         try:
@@ -83,6 +85,28 @@ def download_daily(day: date) -> Path | None:
                 dest.unlink()
     logger.warning("no UA SWE file for %s", day)
     return None
+
+
+def _append_daily_days(
+    start: date,
+    end: date,
+    *,
+    have: set[pd.Timestamp],
+    ordered: list[str],
+    cells: list[np.ndarray],
+    flipped: bool,
+    pieces: list[pd.DataFrame],
+) -> None:
+    day = start
+    while day <= end:
+        if pd.Timestamp(day) in have:
+            day += timedelta(days=1)
+            continue
+        path = download_daily(day)
+        if path is not None:
+            pieces.append(_extract(path, ordered, cells, flipped))
+            path.unlink(missing_ok=True)
+        day += timedelta(days=1)
 
 
 def _index_from_nc(nc_path: Path, sta_ids: list[str]):
@@ -142,6 +166,7 @@ def build_basin_daily(
     *,
     hist_path: Path = WEEKLY_HIST_PATH,
     out_path: Path = OUT_DAILY,
+    today: date | None = None,
 ) -> Path:
     hist = pd.read_parquet(hist_path, columns=["StaID"])
     sta_ids = sorted(hist["StaID"].astype(str).unique())
@@ -154,14 +179,12 @@ def build_basin_daily(
         old = pd.read_parquet(out_path, columns=["date"])
         have = set(pd.to_datetime(old["date"]).unique())
         logger.info("resume SWE: %s days already on disk", len(have))
-    wys = set()
-    cursor = start
-    while cursor <= end:
-        wy = cursor.year + 1 if cursor.month >= 10 else cursor.year
-        wys.add(wy)
-        cursor = date(cursor.year + 1, 1, 1)
+    def _water_year(day: date) -> int:
+        return day.year + 1 if day.month >= 10 else day.year
 
-    today = date.today()
+    wys = set(range(_water_year(start), _water_year(end) + 1))
+
+    today = today or date.today()
     current_wy = today.year + 1 if today.month >= 10 else today.year
     for wy in sorted(wys):
         wy_start = date(wy - 1, 10, 1)
@@ -170,8 +193,25 @@ def build_basin_daily(
         overlap_end = min(end, wy_end)
         if overlap_start > overlap_end:
             continue
+        daily_kwargs = {
+            "have": have,
+            "ordered": ordered,
+            "cells": cells,
+            "flipped": flipped,
+            "pieces": pieces,
+        }
         if wy < current_wy:
-            path = download_water_year(wy)
+            try:
+                path = download_water_year(wy)
+            except RuntimeError as exc:
+                logger.warning(
+                    "yearly SWE file for water year %s is not published yet; "
+                    "using daily files (%s)",
+                    wy,
+                    exc,
+                )
+                _append_daily_days(overlap_start, overlap_end, **daily_kwargs)
+                continue
             frame = _extract(path, ordered, cells, flipped)
             mask = (frame["date"] >= pd.Timestamp(overlap_start)) & (
                 frame["date"] <= pd.Timestamp(overlap_end)
@@ -182,16 +222,7 @@ def build_basin_daily(
             if not frame.empty:
                 pieces.append(frame)
             continue
-        day = overlap_start
-        while day <= overlap_end:
-            if pd.Timestamp(day) in have:
-                day += timedelta(days=1)
-                continue
-            path = download_daily(day)
-            if path is not None:
-                pieces.append(_extract(path, ordered, cells, flipped))
-                path.unlink(missing_ok=True)
-            day += timedelta(days=1)
+        _append_daily_days(overlap_start, overlap_end, **daily_kwargs)
 
     if not pieces and not out_path.exists():
         raise RuntimeError("No UA SWE rows extracted")

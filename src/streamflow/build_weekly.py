@@ -26,6 +26,7 @@ from streamflow.config import (
     PROCESSED_DIR,
     RAW_DIR,
     RESERVOIR_BASIN_DAILY,
+    SMAP_BASIN_DAILY,
     SSEBOP_BASIN_MONTHLY,
     WEEKLY_HIST_PATH,
     WEEKLY_LIVE_PATH,
@@ -34,7 +35,6 @@ from streamflow.ingest_gridmet import OUT_DAILY as GRIDMET_DAILY
 from streamflow.ingest_flow import select_daily_discharge
 from streamflow.ingest_nldas import OUT_DAILY as NLDAS_DAILY
 from streamflow.ingest_openet import attach_openet_to_gages
-from streamflow.ingest_smap import OUT_DAILY as SMAP_DAILY
 from streamflow.storage import atomic_parquet
 from streamflow.matched import (
     add_flow_scores,
@@ -336,7 +336,7 @@ def _attach_nldas(
 
 
 def _attach_smap(
-    weekly: pd.DataFrame, daily_path: Path = SMAP_DAILY
+    weekly: pd.DataFrame, daily_path: Path = SMAP_BASIN_DAILY
 ) -> pd.DataFrame:
     """Monday-week mean of SMAP volumetric soil moisture (cm3/cm3)."""
     if not daily_path.exists():

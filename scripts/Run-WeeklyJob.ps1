@@ -1,9 +1,42 @@
 # Task Scheduler entry point: one run at a time, with a persistent local log.
-$ErrorActionPreference = "Stop"
+param(
+    [string]$Job,
+    [string[]]$ArgumentList = @("--push-docs"),
+    [string]$LogDirectory,
+    [string]$WorkingDirectory
+)
 
-$Root = Split-Path -Parent $PSScriptRoot
-$Job = Join-Path $Root ".venv\Scripts\weekly-job.exe"
-$LogDir = Join-Path $Root "logs"
+$ErrorActionPreference = "Stop"
+# Windows PowerShell 5.1 treats a native program's status text on the error
+# stream as a terminating error when $ErrorActionPreference is Stop. The
+# Monday job prints ordinary progress that way. Never let that abort a run.
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
+
+function ConvertTo-CmdArgument([string]$Value) {
+    if ($Value -notmatch '[ \t&()\[\]{}^=;!''+,`~"]') {
+        return $Value
+    }
+    return '"' + ($Value -replace '"', '""') + '"'
+}
+
+$Root = if ($WorkingDirectory) {
+    $WorkingDirectory
+} else {
+    Split-Path -Parent $PSScriptRoot
+}
+if (-not $Job) {
+    $Job = Join-Path $Root ".venv\Scripts\weekly-job.exe"
+}
+# powershell.exe -File can deliver -ArgumentList as one comma-joined string.
+$ArgumentList = @(
+    $ArgumentList |
+        ForEach-Object { $_ -split ',' } |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ }
+)
+$LogDir = if ($LogDirectory) { $LogDirectory } else { Join-Path $Root "logs" }
 $LockPath = Join-Path $LogDir "weekly-job.lock"
 
 if (-not (Test-Path $Job)) {
@@ -29,8 +62,16 @@ catch {
 $ExitCode = 1
 try {
     "Started $(Get-Date -Format o)" | Out-File -FilePath $LogPath -Encoding utf8
-    & $Job --push-docs *>> $LogPath
+    $cmdParts = @(ConvertTo-CmdArgument $Job) + @(
+        $ArgumentList | ForEach-Object { ConvertTo-CmdArgument $_ }
+    )
+    # cmd.exe appends both streams to the log. PowerShell never sees them.
+    $cmdLine = "$($cmdParts -join ' ') >> `"$LogPath`" 2>&1"
+    cmd.exe /c $cmdLine
     $ExitCode = $LASTEXITCODE
+    if ($null -eq $ExitCode) {
+        $ExitCode = 1
+    }
     "Finished $(Get-Date -Format o) with exit code $ExitCode" |
         Out-File -FilePath $LogPath -Encoding utf8 -Append
 }

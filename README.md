@@ -48,7 +48,7 @@ Any model we keep has to catch **more** of the real droughts than that check, by
 
 The Survey published a rich weekly file for 1980 through March 2020 (about 6.7 million station-weeks, 3,229 stations). That file is frozen. It is what we use to **replay history** and write rules.
 
-After 2020 we have to rebuild the same kinds of columns ourselves: current flow from the Survey’s new water API, weather from gridMET, soil water from NASA, snow from the University of Arizona, short-range weather forecasts, seasonal forecasts, and a few climate indexes (El Niño and the like). That live weekly table is now about 1.07 million station-weeks, 30 March 2020 through 14 September 2026, for 3,220 of those stations. Nine of the 3,229 have no current daily flow in our window; that is missing data, not a download we gave up on. NOAA’s half-degree short-range forecast archive starts 23 September 2020, so the first six months of live weeks have weather and flow but not those forecast columns.
+After 2020 we have to rebuild the same kinds of columns ourselves: current flow from the Survey’s new water API, weather from gridMET, soil water from NASA, snow from the University of Arizona, short-range weather forecasts, seasonal forecasts, and a few climate indexes (El Niño and the like). That live weekly table is now about 1.08 million station-weeks, 30 March 2020 through 5 October 2026, for 3,220 of those stations. Nine of the 3,229 have no current daily flow in our window; that is missing data, not a download we gave up on. NOAA’s half-degree short-range forecast archive starts 23 September 2020, so the first six months of live weeks have weather and flow but not those forecast columns.
 
 We only train and score on columns we can build both ways. Lake storage and one satellite “actual evaporation” column have the same names in the old file and the new file but are **not** the same measurement (different lakes attached, different units). Those stay out of the matched model so a rule written on 1990s data can still be used in 2026.
 
@@ -141,7 +141,7 @@ That was an input-construction failure, not evidence that the model needed retra
 
 ## Where we are today
 
-The last 52 weeks we can score end 14 September 2026. The September 2020 model is still the one in use. In those 52 weeks it caught **68%** of real droughts; “already dry” caught **52%**. The lead is **17 percentage points**, which is above 10, so we **do not** retrain. On weeks that were not drought, it wrongly called drought **18%** of the time (false positives).
+The last 52 weeks we can score end 5 October 2026. The September 2020 model is still the one in use. In those 52 weeks it caught **68%** of real droughts; “already dry” caught **52%**. The lead is **16 percentage points**, which is above 10, so we **do not** retrain. On weeks that were not drought, it wrongly called drought **18%** of the time (false positives).
 
 ## Fixed goalposts
 

@@ -31,7 +31,7 @@ from shapely.ops import transform as shp_transform
 from shapely.strtree import STRtree
 from shapely.validation import make_valid
 
-from streamflow.config import RAW_DIR, WEEKLY_HIST_PATH
+from streamflow.config import RAW_DIR, SMAP_BASIN_DAILY, WEEKLY_HIST_PATH
 from streamflow.earthdata import download as edl_download
 from streamflow.earthdata import session as edl_session
 from streamflow.zonal import BASIN_SHP
@@ -39,7 +39,7 @@ from streamflow.zonal import BASIN_SHP
 logger = logging.getLogger(__name__)
 
 SMAP_DIR = RAW_DIR / "smap"
-OUT_DAILY = RAW_DIR / "smap_basin_daily.parquet"
+OUT_DAILY = SMAP_BASIN_DAILY
 CMR = "https://cmr.earthdata.nasa.gov/search/granules.json"
 FILL = -9999.0
 

@@ -1,4 +1,5 @@
 from datetime import date
+import sys
 
 from streamflow.live_gate import (
     REQUIRED_RECENT_COLUMNS,
@@ -115,6 +116,41 @@ def test_publish_failure_is_reported(monkeypatch):
     )
     assert decision["publish_failed"] is True
     assert any("push rejected" in warning for warning in decision["warnings"])
+
+
+def test_weekly_rebuild_import_does_not_load_smap_reader():
+    import ast
+    from pathlib import Path
+
+    source = Path(weekly_job.__file__).with_name("build_weekly.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    imported = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+        elif isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+    assert "streamflow.ingest_smap" not in imported
+    assert "h5py" not in imported
+
+
+def test_weekly_job_sends_status_to_standard_output(monkeypatch):
+    streams = []
+
+    def capture_config(**kwargs):
+        streams.append(kwargs.get("stream"))
+
+    monkeypatch.setattr(weekly_job.logging, "basicConfig", capture_config)
+    monkeypatch.setattr(
+        weekly_job,
+        "run_weekly",
+        lambda **kwargs: {"kind": "keep", "summary": "Keep the current model."},
+    )
+    weekly_job.main(["--no-ingest", "--no-email"])
+    assert streams
+    assert streams[0] is sys.stdout
 
 
 def test_required_ingest_failure_blocks_scoring(monkeypatch):

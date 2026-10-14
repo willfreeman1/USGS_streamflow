@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import subprocess
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -256,6 +257,8 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
+        stream=sys.stdout,
+        force=True,
     )
     parser = argparse.ArgumentParser(
         description="Monday job: refresh live weeks, apply the locked gate, email."

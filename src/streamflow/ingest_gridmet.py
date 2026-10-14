@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import subprocess
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -46,18 +47,27 @@ VARIABLES = {
 }
 
 
-def download_year(variable: str, year: int, dest_dir: Path = GRIDMET_DIR) -> Path:
+def download_year(
+    variable: str,
+    year: int,
+    dest_dir: Path = GRIDMET_DIR,
+    *,
+    today: date | None = None,
+) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / f"{variable}_{year}.nc"
-    if dest.exists() and dest.stat().st_size > 1_000_000:
+    today = today or date.today()
+    year_is_closed = year < today.year
+    if year_is_closed and dest.exists() and dest.stat().st_size > 1_000_000:
         return dest
     url = f"{GRIDMET_BASE}/{variable}_{year}.nc"
     logger.info("download %s", url)
+    # The current-year file grows. Download a fresh copy so Monday is not stuck.
+    tmp = dest.with_suffix(".nc.part")
+    tmp.unlink(missing_ok=True)
     cmd = [
         "curl.exe",
         "-fL",
-        "-C",
-        "-",
         "-A",
         USER_AGENT,
         "--retry",
@@ -66,12 +76,14 @@ def download_year(variable: str, year: int, dest_dir: Path = GRIDMET_DIR) -> Pat
         "4",
         "--retry-all-errors",
         "-o",
-        str(dest),
+        str(tmp),
         url,
     ]
     result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
+    if result.returncode != 0 or not tmp.exists() or tmp.stat().st_size < 1_000_000:
+        tmp.unlink(missing_ok=True)
         raise RuntimeError(f"gridMET download failed ({result.returncode}): {url}")
+    tmp.replace(dest)
     return dest
 
 

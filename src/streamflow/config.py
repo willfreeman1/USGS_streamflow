@@ -55,6 +55,7 @@ BOOTSTRAP_INSTALLED = date(2020, 9, 21)
 RESERVOIR_BASIN_DAILY = RAW_DIR / "reservoir_basin_daily.parquet"
 SSEBOP_BASIN_MONTHLY = RAW_DIR / "ssebop_basin_monthly.parquet"
 OPENET_POINT_MONTHLY = RAW_DIR / "openet_point_monthly.parquet"
+SMAP_BASIN_DAILY = RAW_DIR / "smap_basin_daily.parquet"
 
 
 def load_env() -> None:
