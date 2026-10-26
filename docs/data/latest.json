@@ -1,15 +1,15 @@
 {
-  "end_date": "2026-10-12",
+  "end_date": "2026-10-19",
   "installed_through": "2020-09-21",
   "promote": false,
-  "locked_recall": 0.6820239864514568,
-  "persistence_recall": 0.519337780389175,
-  "recall_gap": 0.1626862060622818,
-  "locked_false_alarm_rate": 0.17512024486226496,
-  "flow_shift": 0.18938901822812654,
+  "locked_recall": 0.6817162763425655,
+  "persistence_recall": 0.5195047080329734,
+  "recall_gap": 0.16221156830959205,
+  "locked_false_alarm_rate": 0.17292480850398625,
+  "flow_shift": 0.18543400972094481,
   "watch": false,
-  "n": 157005,
-  "n_drought": 28933,
+  "n": 156933,
+  "n_drought": 28993,
   "gap_line": 0.1,
   "shift_watch": 0.2
 }
